@@ -9,7 +9,7 @@ on:
 jobs:
   security-scan:
     name: Security Scans
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
@@ -37,7 +37,7 @@ jobs:
         with:
           api-key: ${{ secrets.BC_API_KEY }}
           directory: .
-          framework: dockerfile,terraform # Scan Dockerfile and any IaC; adjust as needed
+          framework: dockerfile # Scan Dockerfile and any IaC; adjust as needed
           output_format: sarif
           output_file_path: checkov-results.sarif
           fail_build: true # Block pipeline on findings (default is true for high/critical severity)
@@ -50,7 +50,7 @@ jobs:
 
   build:
     name: Build and Test
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: security-scan
     steps:
       - name: Checkout repo
@@ -71,11 +71,10 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t goof-app:latest .
-          docker tag goof-app:latest your-registry/goof-app:${{ github.sha }} # Replace with your registry
 
   deploy:
     name: Deploy
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: build
     if: github.ref == 'refs/heads/main' # Only deploy on main branch push
     steps:
