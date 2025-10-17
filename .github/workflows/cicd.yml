@@ -1,0 +1,90 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  security-scan:
+    name: Security Scans
+    runs-on: self-hosted
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Run Prisma Cloud Checkov
+        id: prisma-cloud
+        uses: bridgecrewio/checkov-action@v12
+        env:
+          PRISMA_API_URL: https://api.ind.prismacloud.io
+        with:
+          api-key: ${{ secrets.BC_API_KEY }}
+          directory: .
+          framework: dockerfile,terraform # Scan Dockerfile and any IaC; adjust as needed
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          fail_build: true # Block pipeline on findings (default is true for high/critical severity)
+
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+
+  build:
+    name: Build and Test
+    runs-on: self-hosted
+    needs: security-scan
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test # Assuming tests exist; adjust if needed
+
+      - name: Build Docker image
+        run: |
+          docker build -t goof-app:latest .
+          docker tag goof-app:latest your-registry/goof-app:${{ github.sha }} # Replace with your registry
+
+  deploy:
+    name: Deploy
+    runs-on: self-hosted
+    needs: build
+    if: github.ref == 'refs/heads/main' # Only deploy on main branch push
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging/production
+        run: |
+          # Placeholder: Add your deployment logic here, e.g., docker push, heroku deploy, etc.
+          # For example: docker push your-registry/goof-app:${{ github.sha }}
+          # Or: heroku container:push web --app your-app && heroku container:release web --app your-app
+          echo "Deployment successful"
