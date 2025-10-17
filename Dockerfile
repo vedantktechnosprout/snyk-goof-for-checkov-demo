@@ -1,5 +1,4 @@
-FROM node:18.13.0
-# FROM node:6-stretch
+FROM node:6-stretch
 
 RUN mkdir /usr/src/goof
 RUN mkdir /tmp/extracted_files
@@ -9,7 +8,8 @@ WORKDIR /usr/src/goof
 # RUN npm update
 # RUN npm install
 
-RUN npm config set strict-ssl false && npm install
+# Install production deps only (skips Snyk if dev/optional; keeps SSL tweak).
+RUN npm config set strict-ssl false && npm install --production
 
 EXPOSE 3001
 EXPOSE 9229
