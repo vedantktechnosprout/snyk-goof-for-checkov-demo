@@ -6,7 +6,10 @@ COPY . /usr/src/goof
 WORKDIR /usr/src/goof
 
 # RUN npm update
-RUN npm install
+# RUN npm install
+
+RUN npm config set strict-ssl false && npm install
+
 EXPOSE 3001
 EXPOSE 9229
 ENTRYPOINT ["npm", "start"]
