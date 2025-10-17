@@ -21,8 +21,8 @@ WORKDIR /usr/src/goof
 # Copy package files first for caching (install deps change less often).
 COPY package*.json ./
 
-# Install dependencies (use ci for reproducible builds; skip dev deps for runtime).
-RUN npm ci --only=production && npm cache clean --force
+# Install dependencies (use install as fallback for lockfile issues; skip dev deps for runtime).
+RUN npm install --production && npm cache clean --force
 
 # Copy app source.
 COPY . .
