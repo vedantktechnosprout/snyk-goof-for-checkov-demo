@@ -12,7 +12,7 @@ on:
 
 # Jobs: Defines parallel/sequential tasks. This pipeline has 3 jobs: security-scan, build, deploy.
 jobs:
-  # First job: Runs security scans (CodeQL + Checkov). Gates the rest via 'needs'.
+  # First job: Runs security scans (CodeQL + Checkov on code/Dockerfile). Gates the rest via 'needs'.
   security-scan:
     # Job name: Shown in UI logs.
     name: Security Scans
@@ -48,64 +48,56 @@ jobs:
         # Action: Executes the analysis (v4; outputs SARIF for GitHub alerts).
         uses: github/codeql-action/analyze@v4
 
-      # Step 5: Second checkout (your specified v2; duplicates prior but harmless—consider removing if issues).
+      # Step 5: Build the Docker image (optional here; enables potential image scan later without extras).
+      - name: Build Docker image
+        # Command: Builds from Dockerfile (tags as 'latest').
+        run: docker build -t goof-app:latest .
+
+      # Step 6: Your exact snippet—second checkout (v2) + minimal Checkov run.
       - name: Checkout repo
         uses: actions/checkout@v2
 
-      # Step 6: Run Checkov (Prisma Cloud) for IaC/Dockerfile/container vulns.
       - name: Run Prisma Cloud 
-        # Step ID: 'prisma-cloud' for referencing outputs (e.g., if: steps.prisma-cloud.outputs.vulns).
         id: prisma-cloud
-        # Action: Checkov action from master branch (latest code; see explanation above).
         uses: bridgecrewio/checkov-action@master
-        # Environment vars: Passed to the action (Prisma API endpoint for India region).
         env:
           PRISMA_API_URL: https://api.ind.prismacloud.io
-        # Inputs: Config for Checkov (api-key from repo secrets; no fail_build here, so won't block by default).
         with:
-          # API key: Pulled from GitHub repo secrets (set in Settings > Secrets).
           api-key: ${{ secrets.BC_API_KEY }}
 
-  # Second job: Builds/tests the app, but only if security-scan succeeds.
+  # Second job: Runs tests (no rebuild needed if build passed security). Depends on security-scan.
   build:
     name: Build and Test
-    # Dependency: Waits for 'security-scan' job to pass.
+    # Dependency: Waits for 'security-scan' job to pass (includes code/Dockerfile scans).
     needs: security-scan
     # Runner: Same as above.
     runs-on: ubuntu-latest
-    # Steps: Focus on prep/build.
+    # Steps: Focus on tests (Docker build already done in security if needed).
     steps:
       # Step 1: Clone code (v4).
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Step 2: Install Node.js (v18 matches your Dockerfile).
+      # Step 2: Install Node.js (for tests).
       - name: Setup Node.js
-        # Action: Official Node setup (v4; caches npm for speed).
         uses: actions/setup-node@v4
         with:
-          # Node version: 18 (from your Dockerfile: node:18.13.0).
           node-version: '18'
-          # Cache: Speeds up npm by reusing ~/.npm.
           cache: 'npm'
 
-      # Step 3: Install app dependencies (clean install via lockfile).
+      # Step 3: Install app dependencies.
       - name: Install dependencies
-        # Command: 'npm ci' for reproducible builds (faster/safer than 'npm install').
         run: npm ci
 
-      # Step 4: Run unit/integration tests.
+      # Step 4: Run unit/integration tests (host-side, not in container).
       - name: Run tests
         # Command: Assumes 'test' script in package.json (e.g., jest/mocha). Fails job if no tests pass.
         run: npm test  # Confirm this script exists in package.json
 
-      # Step 5: Build Docker image for deployment.
-      - name: Build Docker image
-        # Multi-line shell command (uses /bin/sh by default).
+      # Step 5: Rebuild/tag Docker image for deployment (quick if layers cached; tag with SHA).
+      - name: Build and tag Docker image
         run: |
-          # Build from Dockerfile (tags as 'latest').
           docker build -t goof-app:latest .
-          # Tag with commit SHA for versioning (replace 'your-org' with actual GitHub org).
           docker tag goof-app:latest ghcr.io/your-org/goof-app:${{ github.sha }}  # Update registry
 
   # Third job: Deploys, but only on pushes to main (not PRs) and if build succeeds.
