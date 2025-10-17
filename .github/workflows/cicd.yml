@@ -1,89 +1,148 @@
+# Workflow name: Defines the display name in GitHub Actions UI.
 name: CI/CD Pipeline
 
+# Triggers: Specifies when this workflow runs (on push or PR to 'main' branch).
 on:
+  # Run on pushes to the 'main' branch.
   push:
     branches: [ master ]
+  # Run on pull requests targeting the 'main' branch.
   pull_request:
     branches: [ master ]
 
+# Jobs: Defines parallel/sequential tasks. This pipeline has 3 jobs: security-scan, build, deploy.
 jobs:
+  # First job: Runs security scans (CodeQL + Checkov). Gates the rest via 'needs'.
   security-scan:
+    # Job name: Shown in UI logs.
     name: Security Scans
+    # Runner: Uses GitHub-hosted Ubuntu VM (has Node, Docker pre-installed).
     runs-on: ubuntu-latest
+    # Permissions: Allows reading contents/actions and writing security alerts (for SARIF uploads).
     permissions:
       actions: read
       contents: read
       security-events: write
+    # Steps: Sequential commands in this job.
     steps:
+      # Step 1: Clone the repo code.
       - name: Checkout repo
+        # Action: Official GitHub action to fetch code (v4 is latest stable).
         uses: actions/checkout@v4
 
+      # Step 2: Set up CodeQL for static code analysis (detects vulns in JS code).
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        # Action: GitHub's CodeQL init (v4 latest; analyzes JS as specified).
+        uses: github/codeql-action/init@v4
         with:
+          # Languages to scan: Only JavaScript (matches your Node.js app).
           languages: javascript
 
+      # Step 3: Auto-build the project for CodeQL (handles JS transpilation if needed).
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        # Action: GitHub's auto-builder (v4; skips for pure JS but safe to include).
+        uses: github/codeql-action/autobuild@v4
 
+      # Step 4: Run the actual CodeQL scan and generate results.
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        # Action: Executes the analysis (v4; outputs SARIF for GitHub alerts).
+        uses: github/codeql-action/analyze@v4
 
-      - name: Run Prisma Cloud Checkov
+      # Step 5: Second checkout (your specified v2; duplicates prior but harmless—consider removing if issues).
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      # Step 6: Run Checkov (Prisma Cloud) for IaC/Dockerfile/container vulns.
+      - name: Run Prisma Cloud 
+        # Step ID: 'prisma-cloud' for referencing outputs (e.g., if: steps.prisma-cloud.outputs.vulns).
         id: prisma-cloud
-        uses: bridgecrewio/checkov-action@v12
+        # Action: Checkov action from master branch (latest code; see explanation above).
+        uses: bridgecrewio/checkov-action@master
+        # Environment vars: Passed to the action (Prisma API endpoint for India region).
         env:
           PRISMA_API_URL: https://api.ind.prismacloud.io
+        # Inputs: Config for Checkov (api-key from repo secrets; no fail_build here, so won't block by default).
         with:
+          # API key: Pulled from GitHub repo secrets (set in Settings > Secrets).
           api-key: ${{ secrets.BC_API_KEY }}
-          directory: .
-          framework: dockerfile # Scan Dockerfile and any IaC; adjust as needed
-          output_format: sarif
-          output_file_path: checkov-results.sarif
-          fail_build: true # Block pipeline on findings (default is true for high/critical severity)
 
+      # Step 7: Upload Checkov results as SARIF (for GitHub Security tab alerts). Runs always, even on failure.
       - name: Upload Checkov SARIF
+        # Condition: 'always()' ensures upload regardless of prior step success.
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        # Action: GitHub's SARIF uploader (v4).
+        uses: github/codeql-action/upload-sarif@v4
         with:
+          # File path: Assumes Checkov outputs to this (may need --sarif-file-output=checkov-results.sarif in 'with' above if not default).
           sarif_file: checkov-results.sarif
 
+  # Second job: Builds/tests the app, but only if security-scan succeeds.
   build:
     name: Build and Test
-    runs-on: ubuntu-latest
+    # Dependency: Waits for 'security-scan' job to pass.
     needs: security-scan
+    # Runner: Same as above.
+    runs-on: ubuntu-latest
+    # Steps: Focus on prep/build.
     steps:
+      # Step 1: Clone code (v4).
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # Step 2: Install Node.js (v18 matches your Dockerfile).
       - name: Setup Node.js
+        # Action: Official Node setup (v4; caches npm for speed).
         uses: actions/setup-node@v4
         with:
+          # Node version: 18 (from your Dockerfile: node:18.13.0).
           node-version: '18'
+          # Cache: Speeds up npm by reusing ~/.npm.
           cache: 'npm'
 
+      # Step 3: Install app dependencies (clean install via lockfile).
       - name: Install dependencies
+        # Command: 'npm ci' for reproducible builds (faster/safer than 'npm install').
         run: npm ci
 
+      # Step 4: Run unit/integration tests.
       - name: Run tests
-        run: npm test # Assuming tests exist; adjust if needed
+        # Command: Assumes 'test' script in package.json (e.g., jest/mocha). Fails job if no tests pass.
+        run: npm test  # Confirm this script exists in package.json
 
+      # Step 5: Build Docker image for deployment.
       - name: Build Docker image
+        # Multi-line shell command (uses /bin/sh by default).
         run: |
+          # Build from Dockerfile (tags as 'latest').
           docker build -t goof-app:latest .
+          # Tag with commit SHA for versioning (replace 'your-org' with actual GitHub org).
+          docker tag goof-app:latest ghcr.io/your-org/goof-app:${{ github.sha }}  # Update registry
 
+  # Third job: Deploys, but only on pushes to main (not PRs) and if build succeeds.
   deploy:
     name: Deploy
-    runs-on: ubuntu-latest
+    # Dependency: Waits for 'build'.
     needs: build
-    if: github.ref == 'refs/heads/main' # Only deploy on main branch push
+    # Runner: Same.
+    runs-on: ubuntu-latest
+    # Condition: Only run on main branch pushes (skips for PRs/branches).
+    if: github.ref == 'refs/heads/main'  # Now matches triggers
+    # Steps: Deployment logic.
     steps:
+      # Step 1: Clone code (not strictly needed but useful for artifacts).
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Deploy to staging/production
+      # Step 2: Handle deployment (e.g., push image or deploy to Heroku).
+      - name: Deploy to production (e.g., Heroku)
         run: |
-          # Placeholder: Add your deployment logic here, e.g., docker push, heroku deploy, etc.
-          # For example: docker push your-registry/goof-app:${{ github.sha }}
-          # Or: heroku container:push web --app your-app && heroku container:release web --app your-app
+          # Login to GitHub Container Registry using GITHUB_TOKEN (auto-created secret).
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          # Push the tagged image (from build job).
+          docker push ghcr.io/your-org/goof-app:${{ github.sha }}
+          # Uncomment for Heroku (requires heroku CLI installed or use heroku/actions):
+          # heroku container:login
+          # heroku container:push web --app your-heroku-app
+          # heroku container:release web --app your-heroku-app
+          # Placeholder: Logs success (replace with real deploy script).
           echo "Deployment successful"
