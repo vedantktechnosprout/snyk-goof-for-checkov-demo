@@ -66,16 +66,6 @@ jobs:
           # API key: Pulled from GitHub repo secrets (set in Settings > Secrets).
           api-key: ${{ secrets.BC_API_KEY }}
 
-      # Step 7: Upload Checkov results as SARIF (for GitHub Security tab alerts). Runs always, even on failure.
-      - name: Upload Checkov SARIF
-        # Condition: 'always()' ensures upload regardless of prior step success.
-        if: always()
-        # Action: GitHub's SARIF uploader (v4).
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          # File path: Assumes Checkov outputs to this (may need --sarif-file-output=checkov-results.sarif in 'with' above if not default).
-          sarif_file: checkov-results.sarif
-
   # Second job: Builds/tests the app, but only if security-scan succeeds.
   build:
     name: Build and Test
